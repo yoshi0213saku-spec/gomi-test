@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ごみ分別ナビ</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PapaParse for CSV parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Noto+Sans+JP:wght@400;700&display=swap');
+        
+        body {
+            font-family: 'Inter', 'Noto Sans JP', sans-serif;
+            background-color: #f8fafc;
+        }
+
+        .search-focus:focus {
+            ring: 2px;
+            ring-color: #10b981;
+            border-color: #10b981;
+        }
+
+        .card-transition {
+            transition: all 0.2s ease-in-out;
+        }
+
+        .card-transition:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+        }
+
+        /* カスタムスクロールバー */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 10px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+    </style>
+</head>
+<body class="min-h-screen pb-12">
+
+    <!-- ヘッダー -->
+    <header class="bg-emerald-600 text-white py-8 px-4 shadow-lg mb-8">
+        <div class="max-w-2xl mx-auto text-center">
+            <h1 class="text-3xl font-bold mb-2 flex items-center justify-center gap-2">
+                <span>♻️</span> ごみ分別ナビ
+            </h1>
+            <p class="text-emerald-100 text-sm">迷いやすいごみの分別を素早く検索</p>
+        </div>
+    </header>
+
+    <main class="max-w-2xl mx-auto px-4">
+        <!-- 検索セクション -->
+        <div class="bg-white rounded-2xl shadow-sm p-6 mb-6 border border-slate-200">
+            <div class="relative">
+                <input type="text" id="search" 
+                    class="w-full pl-12 pr-4 py-4 bg-slate-50 border border-slate-200 rounded-xl text-lg focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-transparent transition-all"
+                    placeholder="品目を入力（例：くし、電池、かばん）">
+                <span class="absolute left-4 top-1/2 -translate-y-1/2 text-2xl grayscale opacity-50">🔍</span>
+            </div>
+            
+            <!-- 設定/アップロードボタン -->
+            <div class="mt-4 flex items-center justify-between text-xs text-slate-500">
+                <p id="dataCount">読み込み中...</p>
+                <label class="cursor-pointer hover:text-emerald-600 flex items-center gap-1 transition-colors">
+                    <span>📁 自分のCSVを使う</span>
+                    <input type="file" id="csvFile" accept=".csv" class="hidden">
+                </label>
+            </div>
+        </div>
+
+        <!-- 結果表示エリア -->
+        <div id="result" class="space-y-4">
+            <!-- カードがここに動的に生成されます -->
+        </div>
+
+        <!-- 該当なし表示 -->
+        <div id="noResult" class="hidden text-center py-12">
+            <div class="text-5xl mb-4">🤔</div>
+            <p class="text-slate-500 font-medium">該当する品目が見つかりませんでした</p>
+            <p class="text-slate-400 text-sm mt-1">言葉を変えて検索してみてください</p>
+        </div>
+        
+        <!-- 初期表示ガイド -->
+        <div id="welcomeMessage" class="text-center py-12 border-2 border-dashed border-slate-200 rounded-2xl bg-white/50">
+            <p class="text-slate-500">検索ボックスに捨てたいものを入力してください</p>
+        </div>
+    </main>
+
+    <!-- メッセージボックス -->
+    <div id="toast" class="fixed bottom-8 left-1/2 -translate-x-1/2 bg-slate-800 text-white px-6 py-3 rounded-full shadow-2xl text-sm font-medium opacity-0 transition-opacity pointer-events-none">
+        データを更新しました
+    </div>
+
+    <script>
+        // デフォルトのサンプルデータ
+        const defaultData = [
+            { 品目: "プラスチック製くし", 分別区分: "可燃ごみ", 出し方: "指定ごみ袋に入れる", アドバイス: "15cm以上のものは粗大ごみになる場合があります。" },
+            { 品目: "乾電池（アルカリ・マンガン）", 分別区分: "有害ごみ", 出し方: "透明な袋に入れる", アドバイス: "端子部分にテープを貼って絶縁してください。" },
+            { 品目: "革製かばん", 分別区分: "可燃ごみ", 出し方: "指定ごみ袋に入れる", アドバイス: "金属パーツは外せるなら不燃ごみへ。" },
+            { 品目: "スマートフォン", 分別区分: "小型家電", 出し方: "回収ボックス", アドバイス: "必ずデータを消去してから出してください。" },
+            { 品目: "陶器製の皿", 分別区分: "不燃ごみ", 出し方: "「キケン」と表示", アドバイス: "厚紙などで包んで安全に出してください。" },
+            { 品目: "スプレー缶", 分別区分: "資源物", 出し方: "中身を使い切る", アドバイス: "火気のない場所で中身を出し切ってください。穴あけ要否は自治体によります。" },
+            { 品目: "ダンボール", 分別区分: "資源物", 出し方: "ひもで束ねる", アドバイス: "粘着テープや配送伝票は剥がしてください。" }
+        ];
+
+        let gomiData = [...defaultData];
+        const searchInput = document.getElementById('search');
+        const resultContainer = document.getElementById('result');
+        const noResult = document.getElementById('noResult');
+        const welcomeMessage = document.getElementById('welcomeMessage');
+        const dataCountEl = document.getElementById('dataCount');
+        const csvFileInput = document.getElementById('csvFile');
+        const toast = document.getElementById('toast');
+
+        // 初期化
+        window.onload = () => {
+            updateDataCount();
+        };
+
+        function updateDataCount() {
+            dataCountEl.textContent = `現在の登録数: ${gomiData.length} 件`;
+        }
+
+        function showToast(message) {
+            toast.textContent = message;
+            toast.style.opacity = '1';
+            setTimeout(() => { toast.style.opacity = '0'; }, 3000);
+        }
+
+        // CSVアップロード処理
+        csvFileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            Papa.parse(file, {
+                header: true,
+                skipEmptyLines: true,
+                complete: (results) => {
+                    if (results.data && results.data.length > 0) {
+                        gomiData = results.data;
+                        updateDataCount();
+                        showToast(`${file.name} を読み込みました`);
+                        performSearch(); // 再検索
+                    }
+                },
+                error: (err) => {
+                    showToast("ファイルの読み込みに失敗しました");
+                }
+            });
+        });
+
+        // 検索処理
+        searchInput.addEventListener('input', performSearch);
+
+        function performSearch() {
+            const keyword = searchInput.value.trim().toLowerCase();
+            
+            // 入力が空の場合
+            if (!keyword) {
+                resultContainer.innerHTML = '';
+                noResult.classList.add('hidden');
+                welcomeMessage.classList.remove('hidden');
+                return;
+            }
+
+            welcomeMessage.classList.add('hidden');
+
+            // フィルタリング (品目または分別区分で検索)
+            const filtered = gomiData.filter(row => {
+                const item = String(row.品目 || "").toLowerCase();
+                const type = String(row.分別区分 || "").toLowerCase();
+                const note = String(row.アドバイス || row['出し方・分け方のアドバイス'] || "").toLowerCase();
+                return item.includes(keyword) || type.includes(keyword) || note.includes(keyword);
+            });
+
+            renderResults(filtered);
+        }
+
+        function renderResults(list) {
+            resultContainer.innerHTML = '';
+
+            if (list.length === 0) {
+                noResult.classList.remove('hidden');
+                return;
+            }
+
+            noResult.classList.add('hidden');
+
+            const fragment = document.createDocumentFragment();
+            
+            list.forEach(row => {
+                const itemName = row.品目 || "名称不明";
+                const typeName = row.分別区分 || "未分類";
+                const howTo = row.出し方 || "-";
+                const advice = row.アドバイス || row['出し方・分け方のアドバイス'] || "";
+
+                const card = document.createElement('div');
+                card.className = "card-transition bg-white rounded-xl p-5 border border-slate-200 shadow-sm flex flex-col gap-3";
+
+                // 分別区分に応じたバッジ色
+                let badgeClass = "bg-slate-100 text-slate-700";
+                if (typeName.includes("可燃")) badgeClass = "bg-orange-100 text-orange-700";
+                else if (typeName.includes("不燃")) badgeClass = "bg-blue-100 text-blue-700";
+                else if (typeName.includes("資源")) badgeClass = "bg-emerald-100 text-emerald-700";
+                else if (typeName.includes("有害")) badgeClass = "bg-red-100 text-red-700";
+                else if (typeName.includes("粗大")) badgeClass = "bg-purple-100 text-purple-700";
+
+                card.innerHTML = `
+                    <div class="flex justify-between items-start gap-2">
+                        <h3 class="text-lg font-bold text-slate-800 leading-tight"></h3>
+                        <span class="px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap badge-el"></span>
+                    </div>
+                    <div class="text-sm text-slate-600 bg-slate-50 p-3 rounded-lg flex items-center gap-2">
+                        <span class="text-emerald-600 font-bold text-xs uppercase tracking-wider">How to</span>
+                        <span class="how-to-el"></span>
+                    </div>
+                    <p class="text-xs text-slate-500 leading-relaxed advice-el italic"></p>
+                `;
+
+                // セキュリティ対策（textContentを使用）
+                card.querySelector('h3').textContent = itemName;
+                card.querySelector('.badge-el').textContent = typeName;
+                card.querySelector('.badge-el').className += ` ${badgeClass}`;
+                card.querySelector('.how-to-el').textContent = howTo;
+                card.querySelector('.advice-el').textContent = advice ? `💡 ${advice}` : "";
+
+                fragment.appendChild(card);
+            });
+
+            resultContainer.appendChild(fragment);
+        }
+    </script>
+</body>
+</html>
